@@ -9,6 +9,7 @@
     .status-online { color: green; font-weight: bold; }
     .status-offline { color: red; font-weight: bold; }
     .status-unknown { color: gray; }
+    .action-bar { margin-bottom: 2rem; }
   </style>
 </head>
 <body>
@@ -16,9 +17,15 @@
     <h2>MoonTVPlus 直播源管理</h2>
     
     <article>
-      <header>订阅地址</header>
+      <header>订阅与数据</header>
       <p>M3U 格式：<a href="/playlist.m3u" target="_blank" id="m3u-link">/playlist.m3u</a></p>
       <p>TXT 格式：<a href="/playlist.txt" target="_blank" id="txt-link">/playlist.txt</a></p>
+      <hr>
+      <div class="grid action-bar">
+        <button class="secondary" onclick="exportData()">⬇️ 导出配置 (JSON)</button>
+        <button class="secondary" onclick="document.getElementById('import-file').click()">⬆️ 导入配置 (JSON)</button>
+        <input type="file" id="import-file" accept=".json" style="display: none;" onchange="importData(event)">
+      </div>
     </article>
 
     <article>
@@ -34,6 +41,10 @@
           </select>
           <input type="text" id="roomId" placeholder="房间号" required>
           <input type="text" id="group" placeholder="分组 (如: 游戏)" required>
+          <select id="playMode" required>
+            <option value="proxy" selected>服务器代理</option>
+            <option value="direct">直连(302跳转)</option>
+          </select>
         </div>
         <button type="submit">保存频道</button>
       </form>
@@ -48,6 +59,7 @@
             <th>平台</th>
             <th>房间号</th>
             <th>分组</th>
+            <th>模式</th>
             <th>状态</th>
             <th>操作</th>
           </tr>
@@ -60,7 +72,6 @@
   <script>
     let state = { channels: [], settings: { intervalMinutes: 10 } };
     
-    // 自动携带 token 如果 URL 中有
     const urlParams = new URLSearchParams(window.location.search);
     const token = urlParams.get('token');
     const tokenQuery = token ? `?token=${token}` : '';
@@ -96,6 +107,7 @@
           <td>${ch.platform}</td>
           <td>${ch.roomId}</td>
           <td>${ch.group}</td>
+          <td><span style="color: ${ch.playMode === 'direct' ? '#10b981' : '#3b82f6'}">${ch.playMode === 'direct' ? '直连' : '代理'}</span></td>
           <td class="status-${ch.status || 'unknown'}">${ch.status === 'online' ? '在线' : (ch.status === 'offline' ? '离线' : '检测中')}</td>
           <td><a href="#" onclick="deleteChannel(${index})" style="color:red;">删除</a></td>
         `;
@@ -110,9 +122,10 @@
         platform: document.getElementById('platform').value,
         roomId: document.getElementById('roomId').value,
         group: document.getElementById('group').value,
+        playMode: document.getElementById('playMode').value,
         status: 'unknown'
       };
-      // 检查重复
+      
       const existIdx = state.channels.findIndex(c => c.platform === newChannel.platform && c.roomId === newChannel.roomId);
       if (existIdx >= 0) state.channels[existIdx] = newChannel;
       else state.channels.push(newChannel);
@@ -126,6 +139,42 @@
         state.channels.splice(index, 1);
         saveData();
       }
+    };
+
+    // ==== 新增：导出数据 ====
+    window.exportData = () => {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
+      const downloadAnchorNode = document.createElement('a');
+      downloadAnchorNode.setAttribute("href", dataStr);
+      downloadAnchorNode.setAttribute("download", "moontv_backup.json");
+      document.body.appendChild(downloadAnchorNode);
+      downloadAnchorNode.click();
+      downloadAnchorNode.remove();
+    };
+
+    // ==== 新增：导入数据 ====
+    window.importData = (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const importedState = JSON.parse(e.target.result);
+          if (!importedState.channels || !Array.isArray(importedState.channels)) {
+            throw new Error("无效的配置文件格式");
+          }
+          if (confirm('⚠️ 导入将覆盖当前的频道列表，是否确认继续？')) {
+            state = importedState;
+            saveData();
+            alert('✅ 导入成功！');
+          }
+        } catch (err) {
+          alert('❌ 导入失败: ' + err.message);
+        }
+        event.target.value = ''; // 清空选择，允许重复导入同一文件
+      };
+      reader.readAsText(file);
     };
 
     loadData();
