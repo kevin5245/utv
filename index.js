@@ -21,7 +21,6 @@ const PLATFORM_HOST_ALLOWLIST = {
   douyin: [/\.douyin\.com$/i, /^douyin\.com$/i, /\.douyincdn\.com$/i, /^douyincdn\.com$/i, /\.bytegoofy\.com$/i, /^bytegoofy\.com$/i, /\.bytedance\.com$/i, /^bytedance\.com$/i]
 };
 
-// ==== 数据存储逻辑 ====
 const dataFile = path.join(__dirname, 'data.json');
 let appData = { settings: { intervalMinutes: 10 }, channels: [] };
 if (fs.existsSync(dataFile)) {
@@ -29,7 +28,6 @@ if (fs.existsSync(dataFile)) {
 }
 const saveAppData = () => fs.writeFileSync(dataFile, JSON.stringify(appData, null, 2));
 
-// ==== 原有核心逻辑 (保持不变) ====
 function json(res, statusCode, body, extraHeaders = {}) {
   const payload = JSON.stringify(body, null, 2);
   res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', ...extraHeaders });
@@ -41,7 +39,6 @@ function text(res, statusCode, body, contentType = 'text/plain; charset=utf-8') 
   res.end(body);
 }
 
-// 稍微修改：支持 query param 传 token 方便 M3U 播放器和管理后台
 function requireAuth(req, res, url) {
   if (!API_TOKEN) return true;
   if (url && url.searchParams.get('token') === API_TOKEN) return true;
@@ -71,8 +68,7 @@ function proxyUrl(req, streamUrl, type, platform) {
   return `${origin}/proxy/${type}?${params.toString()}`;
 }
 
-// ... 虎牙/B站/抖音 解析器 ...
-function getHuyaAntiCode(oldAntiCode, streamName) { /* 同原版 */
+function getHuyaAntiCode(oldAntiCode, streamName) {
   const paramsT = 100; const sdkVersion = 2403051612; const now = Date.now(); const sdkSid = now;
   const initUuid = (Math.floor((now % 10000000000) * 1000) + Math.floor(1000 * Math.random())) % 4294967295;
   const uid = Math.floor(Math.random() * (1400009999999 - 1400000000000 + 1)) + 1400000000000;
@@ -151,17 +147,19 @@ function getReferer(platform, targetUrl) {
   return 'https://www.huya.com/';
 }
 
-// ==== API & Route Handlers ====
-
 async function handleStream(req, res, url) {
   if (!requireAuth(req, res, url)) return;
   const platform = url.searchParams.get('platform') || '';
   const roomId = url.searchParams.get('roomId') || '';
+  const isDirect = url.searchParams.get('direct') === '1';
+
   if (!platform || !roomId) return json(res, 400, { error: '缺少 platform 或 roomId' });
   const stream = await resolveStream(platform, roomId);
   const proxiedUrl = proxyUrl(req, stream.originalUrl, stream.type, stream.platform);
-  // 对于播放器，直接 302 重定向到代理流地址
-  res.writeHead(302, { Location: proxiedUrl });
+  
+  const targetUrl = isDirect ? stream.originalUrl : proxiedUrl;
+  
+  res.writeHead(302, { Location: targetUrl });
   res.end();
 }
 
@@ -193,7 +191,8 @@ function generatePlaylist(req, res, format) {
   if (format === 'm3u') {
     let out = "#EXTM3U\n";
     appData.channels.forEach(ch => {
-      const url = `${origin}/stream?platform=${ch.platform}&roomId=${ch.roomId}${tokenStr}`;
+      const directStr = ch.playMode === 'direct' ? '&direct=1' : '';
+      const url = `${origin}/stream?platform=${ch.platform}&roomId=${ch.roomId}${tokenStr}${directStr}`;
       out += `#EXTINF:-1 group-title="${ch.group || '默认'}",${ch.name}\n${url}\n`;
     });
     return text(res, 200, out, 'application/vnd.apple.mpegurl; charset=utf-8');
@@ -203,7 +202,8 @@ function generatePlaylist(req, res, format) {
     const groups = {};
     appData.channels.forEach(ch => {
       if (!groups[ch.group]) groups[ch.group] = [];
-      groups[ch.group].push(`${ch.name},${origin}/stream?platform=${ch.platform}&roomId=${ch.roomId}${tokenStr}`);
+      const directStr = ch.playMode === 'direct' ? '&direct=1' : '';
+      groups[ch.group].push(`${ch.name},${origin}/stream?platform=${ch.platform}&roomId=${ch.roomId}${tokenStr}${directStr}`);
     });
     let out = "";
     for (const g in groups) {
@@ -213,12 +213,10 @@ function generatePlaylist(req, res, format) {
   }
 }
 
-// HTTP Server
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     
-    // UI & API 路由
     if (url.pathname === '/admin') {
       if (!requireAuth(req, res, url)) return;
       const html = fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf-8');
@@ -240,11 +238,9 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // 订阅输出
     if (url.pathname === '/playlist.m3u') return generatePlaylist(req, res, 'm3u');
     if (url.pathname === '/playlist.txt') return generatePlaylist(req, res, 'txt');
 
-    // 播放与代理代理
     if (url.pathname === '/stream') return await handleStream(req, res, url);
     if (url.pathname.startsWith('/proxy/')) return await handleProxy(req, res, url);
     if (url.pathname === '/' || url.pathname === '/health') return json(res, 200, { ok: true, admin: '/admin' });
@@ -256,7 +252,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// 后台定时任务：检测在线状态 (仅检测，不产生真实推流流量)
 setInterval(async () => {
   for (const ch of appData.channels) {
     try {
