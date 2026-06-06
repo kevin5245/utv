@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MoonTVPlus 管理后台</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+  <style>
+    .status-online { color: green; font-weight: bold; }
+    .status-offline { color: red; font-weight: bold; }
+    .status-unknown { color: gray; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h2>MoonTVPlus 直播源管理</h2>
+    
+    <article>
+      <header>订阅地址</header>
+      <p>M3U 格式：<a href="/playlist.m3u" target="_blank" id="m3u-link">/playlist.m3u</a></p>
+      <p>TXT 格式：<a href="/playlist.txt" target="_blank" id="txt-link">/playlist.txt</a></p>
+    </article>
+
+    <article>
+      <header>添加/修改频道</header>
+      <form id="channel-form">
+        <div class="grid">
+          <input type="text" id="name" placeholder="频道名称 (如: 张大仙)" required>
+          <select id="platform" required>
+            <option value="" disabled selected>选择平台</option>
+            <option value="huya">虎牙</option>
+            <option value="bilibili">B站</option>
+            <option value="douyin">抖音</option>
+          </select>
+          <input type="text" id="roomId" placeholder="房间号" required>
+          <input type="text" id="group" placeholder="分组 (如: 游戏)" required>
+        </div>
+        <button type="submit">保存频道</button>
+      </form>
+    </article>
+
+    <article>
+      <header>频道列表</header>
+      <table role="grid">
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>平台</th>
+            <th>房间号</th>
+            <th>分组</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="channel-list"></tbody>
+      </table>
+    </article>
+  </main>
+
+  <script>
+    let state = { channels: [], settings: { intervalMinutes: 10 } };
+    
+    // 自动携带 token 如果 URL 中有
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    const tokenQuery = token ? `?token=${token}` : '';
+    
+    if (token) {
+      document.getElementById('m3u-link').href = `/playlist.m3u${tokenQuery}`;
+      document.getElementById('txt-link').href = `/playlist.txt${tokenQuery}`;
+    }
+
+    async function loadData() {
+      const res = await fetch(`/api/config${tokenQuery}`);
+      if (!res.ok) return alert('无法获取数据，可能未授权');
+      state = await res.json();
+      renderTable();
+    }
+
+    async function saveData() {
+      await fetch(`/api/config${tokenQuery}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state)
+      });
+      loadData();
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('channel-list');
+      tbody.innerHTML = '';
+      state.channels.forEach((ch, index) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${ch.name}</td>
+          <td>${ch.platform}</td>
+          <td>${ch.roomId}</td>
+          <td>${ch.group}</td>
+          <td class="status-${ch.status || 'unknown'}">${ch.status === 'online' ? '在线' : (ch.status === 'offline' ? '离线' : '检测中')}</td>
+          <td><a href="#" onclick="deleteChannel(${index})" style="color:red;">删除</a></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    document.getElementById('channel-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const newChannel = {
+        name: document.getElementById('name').value,
+        platform: document.getElementById('platform').value,
+        roomId: document.getElementById('roomId').value,
+        group: document.getElementById('group').value,
+        status: 'unknown'
+      };
+      // 检查重复
+      const existIdx = state.channels.findIndex(c => c.platform === newChannel.platform && c.roomId === newChannel.roomId);
+      if (existIdx >= 0) state.channels[existIdx] = newChannel;
+      else state.channels.push(newChannel);
+      
+      saveData();
+      e.target.reset();
+    });
+
+    window.deleteChannel = (index) => {
+      if (confirm('确认删除?')) {
+        state.channels.splice(index, 1);
+        saveData();
+      }
+    };
+
+    loadData();
+  </script>
+</body>
+</html>
