@@ -1,0 +1,9 @@
+{
+  "name": "moontvplus-live-manager",
+  "version": "1.0.0",
+  "description": "Minimalist IPTV Live Proxy & Manager",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  }
+}
